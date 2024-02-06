@@ -4,10 +4,18 @@ import pandas as pd
 from scipy.interpolate import interp1d
 
 # Thrust Curve
-thrust = pd.read_csv('Simulation/Thrust_curve.csv', skiprows=3)
-m_propellant = 52/1000  # kg
+thrust = pd.read_csv('Simulation/Thrust_curve.csv', skiprows=3) # read thrust curve data
+m_propellant = 52/1000  # mass of propellant in kg from details
+
+# interpolating the thrust curve to get thrust at any time, with '0' values after burnout
 t_interp = interp1d(thrust['Time (s)'], thrust['Thrust (N)'], kind='linear', fill_value=(0,0), bounds_error=False)
+
+# assume linear fuel burn throughout the burn time
 fuel_mass_rate =  m_propellant/thrust['Time (s)'].max()
+
+
+
+# Plotting thrust curve
 
 # plt.plot(thrust['Time (s)'], thrust['Thrust (N)'])
 # plt.xlabel('Time (s)')
@@ -16,18 +24,17 @@ fuel_mass_rate =  m_propellant/thrust['Time (s)'].max()
 # plt.show()
 
 # Rocket Parameters
-m_dry = 1  # kg
-# print('Total mass: ',m_dry + m_propellant)  # kg
-area = np.pi * (0.029/2)**2  # m^2
-chute_area = np.pi * 0.3**2  # m^2
+m_dry = 1.7  # mass of rocket without propellant but including motor casing, electronics, etc. in kg
+area = np.pi * (0.029/2)**2  # frontal area of rocket for drag calculation in m^2
+chute_area = np.pi * 0.3**2  # parachute area in m^2
 Cd = 0.75  # drag coefficient
 
 # Simulation Parameters
-dt = 0.01  # s
-simulation_time = 100  # s
-t = np.arange(0, simulation_time, dt)
+dt = 0.01  # time step in seconds
+simulation_time = 40  # total simulation time
+t = np.arange(0, simulation_time, dt) # array of time steps at which to calculate the rocket's state
 
-# Initial Conditions
+# Initial Conditions - create arrays and give initial values
 acceleration = [0]
 velocity = [0]
 position = [0]
@@ -37,36 +44,41 @@ chute = [False]
 
 # Simulation
 for i in range(len(t)-1):
-    F_thrust = t_interp(t[i])
-    F_drag = 0.5 * 1.225 * Cd * area * velocity[i]**2
-    F_chute = 0.5 * 1.225 * Cd * chute_area * velocity[i]**2
-    F_gravity = 9.80665 * mass[i]
-    if mass[i] > m_dry:
-        F_net = F_thrust - (F_gravity + F_drag)
-        chute.append(False)
-    else:
-        if np.gradient(position)[-1]<=0:
-            F_net = F_chute + F_drag - F_gravity
-            chute.append(True)
+    F_thrust = t_interp(t[i]) # get thrust at time t[i]
+    F_drag = 0.5 * 1.225 * Cd * area * velocity[i]**2 # drag force
+    F_chute = 0.5 * 1.225 * Cd * chute_area * velocity[i]**2 # additional drag from chute
+    F_gravity = 9.80665 * mass[i] # force due to gravity
+    if mass[i] > m_dry: # if there is still propellant left
+        F_net = F_thrust - (F_gravity + F_drag) # net force
+        chute.append(False) # chute not deployed (just for tracking not used in simulation)
+    else: # if all propellant has been used
+        if np.gradient(position)[-1]<=0: # if past apogee (could use if velocity[i] < 0 but idky i chose this)
+            F_net = F_chute + F_drag - F_gravity # include chute drag if descending
+            chute.append(True) # chute deployed (just for tracking not used in simulation)
         else:
-            F_net = F_drag - F_gravity
-            chute.append(False)
+            F_net = -F_drag - F_gravity # ascending and decelerating
+            chute.append(False) # chute not deployed (just for tracking not used in simulation)
 
-    a = F_net / mass[i]
-    v = velocity[i] + (a * dt)
-    x = np.max([position[i] + (v * dt), 0])
-    m = np.max([mass[i] - (fuel_mass_rate * dt), m_dry])
+    a = F_net / mass[i] # calculate acceleration
+    v = velocity[i] + (a * dt) # calculate new velocity
+    x = np.max([position[i] + (v * dt), 0]) # calculate new position, ensuring it doesn't go below 0
+    m = np.max([mass[i] - (fuel_mass_rate * dt), m_dry]) # calculate new mass, ensuring it doesn't go below m_dry
     
+    # append new values to arrays
     drag.append(F_drag)
     acceleration.append(a)
     velocity.append(v)
     position.append(x)
     mass.append(m)
 
+# find apogee, descent rate and total flight time
 xlim = t[np.where(np.gradient(position)==0)[0][1]]
 print('Time to Apogee:', t[np.where(np.array(position)==np.max(position))[0][0]], 's')
 print('Time to ground: ', xlim, 's')
 print('Descent Rate: ', np.min(velocity), 'm/s')
+
+
+# Plotting
 
 fig, ax = plt.subplots(5, 1, dpi=150, figsize=(10, 10), sharex=True)
 
